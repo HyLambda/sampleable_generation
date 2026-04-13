@@ -1,0 +1,10 @@
+﻿__pycache__/
+*.pyc
+*.pth
+*.pt
+*.npy
+*.npz
+*.pkl
+*.log
+.DS_Store
+Thumbs.db
