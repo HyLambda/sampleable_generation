@@ -526,7 +526,7 @@ let autoTimer = null;
 
 // -------------------------------------------------------------------------
 // Math primitives — named as in the paper
-// -------------------------------------------------------------------------
+
 
 function sq_dist(a, b) {
   return (a[0]-b[0])**2 + (a[1]-b[1])**2;
@@ -894,9 +894,9 @@ function buildCloud() {
   pts = GEO[key](N);
 }
 
-// -------------------------------------------------------------------------
-// Canvas rendering
-// -------------------------------------------------------------------------
+// Canvas rendering ---------------
+
+
 
 function cx(x) { return x * CW; }
 function cy(y) { return y * CH; }
@@ -1087,9 +1087,7 @@ function render() {
   drawLegend(C);
 }
 
-// -------------------------------------------------------------------------
-// UI helpers
-// -------------------------------------------------------------------------
+// -----------------------------------------
 
 function setPhaseBadge(cls, label) {
   const el = document.getElementById('phase-badge');
@@ -1136,8 +1134,8 @@ function log(msg, cls) {
 }
 
 // -------------------------------------------------------------------------
-// Algorithm steps
-// -------------------------------------------------------------------------
+// Algorithm steps  ------
+
 
 function doSetup() {
   K = parseInt(document.getElementById('cfg-k').value);
@@ -1315,7 +1313,7 @@ document.getElementById('cfg-n').addEventListener('input', function() {
 
 // -------------------------------------------------------------------------
 // Init
-// -------------------------------------------------------------------------
+
 
 rebuild();
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
