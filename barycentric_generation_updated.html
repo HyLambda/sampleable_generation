@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>certified barycentric generation: algorithm 2 / lam 2025</title>
+<script>
+MathJax = {
+  tex: { inlineMath: [['$','$']], displayMath: [['$$','$$']], tags: 'none' },
+  options: { skipHtmlTags: ['script','noscript','style','textarea'] }
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" id="MathJax-script" async></script>
+<style>
+  /* -----------------------------------------------------------------------
+     Certified Barycentric Generation from Labeled Point Clouds
+     Interactive algorithm animation
+
+     Hy P. G. Lam
+     Department of Mathematical Sciences
+     Worcester Polytechnic Institute
+     Worcester, MA 01609  |  hlam@wpi.edu
+
+     Companion to:
+       [Lam2026a]  Close-to-Geometry-Preserving Sampleable Generation
+                   from Labeled Point Clouds
+       [Lam2026b]  Equiangular Tight Frames, Symmetry Classes, and
+                   Certified Barycentric Generation for Sampleable Point Clouds
+
+     The animation steps through Algorithm 2 of [Lam2026a]:
+       Setup:  compute Y = T_theta(X), store S_k(i;Y) for all i,
+               bracket endpoints m_k = min_i S_k(i;Y), M_k = max_i S_k(i;Y).
+       Sample: draw i* ~ Uniform{1,...,N}; form barycentric proposal
+               y_hat = (y_{i*} + sum_{j in N_k(i*;Y)} y_j) / (k+1);
+               accept iff m_k <= S_k(y_hat; Y) <= M_k;
+               output x_hat = T_theta^{-1}(y_hat) on acceptance.
+
+     Core identities animating the acceptance geometry:
+       y_hat = c + k/(k+1) * v_bar                        (displacement)
+       ||y_hat - c||^2 = k^2/(k+1)^2 * ||v_bar||^2        (seed distance)
+       (1/k) sum_{j in B*} ||y_hat - y_j||^2
+            = beta - k(k+2)/(k+1)^2 * ||v_bar||^2         (nbhd average)
+       bracket: beta/(k+1)^2  <=  avg  <=  beta            (hard bounds)
+
+     The cloud is a deliberate non-uniform mixture:
+       55% from N((0.28, 0.52), 0.09^2 I)   [dense cluster]
+       45% from N((0.70, 0.42), 0.16^2 I)   [sparse cluster]
+     This makes the acceptance filter visibly non-trivial.
+  ----------------------------------------------------------------------- */
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:          #f8f7f3;
+    --bg2:         #eeecea;
+    --bg3:         #e5e3de;
+    --border:      #d0cec8;
+    --border2:     #bcbab3;
+    --text:        #2c2c2a;
+    --text2:       #5f5e5a;
+    --text3:       #888780;
+    --blue:        #185fa5;
+    --blue-lt:     #e6f1fb;
+    --amber:       #ba7517;
+    --amber-lt:    #faeeda;
+    --green:       #0f6e56;
+    --green-lt:    #e1f5ee;
+    --red:         #a32d2d;
+    --red-lt:      #fcebeb;
+    --mono:        'Courier New', Courier, monospace;
+    --sans:        -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --radius:      8px;
+    --radius-lg:   12px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:      #1e1e1c;
+      --bg2:     #282825;
+      --bg3:     #323230;
+      --border:  #3a3a37;
+      --border2: #4a4a46;
+      --text:    #c8c6bc;
+      --text2:   #8d8c85;
+      --text3:   #5f5e5a;
+      --blue:        #4a9cd6;
+      --blue-lt:     #0c2f50;
+      --amber:       #efab3a;
+      --amber-lt:    #3a2800;
+      --green:       #3ecfa0;
+      --green-lt:    #042e22;
+      --red:         #e06060;
+      --red-lt:      #380e0e;
+    }
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 20px;
+    max-width: 960px;
+    margin: 0 auto;
+  }
+
+  header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 14px;
+    margin-bottom: 18px;
+  }
+  header h1 {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 3px;
+  }
+  header p {
+    font-size: 12px;
+    color: var(--text2);
+    line-height: 1.6;
+  }
+  header .refs {
+    font-size: 11px;
+    color: var(--text3);
+    margin-top: 4px;
+    font-style: italic;
+  }
+
+  #layout {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  #canvas-col { flex: 1; min-width: 300px; }
+
+  canvas {
+    display: block;
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg2);
+  }
+
+  #side-col {
+    width: 218px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 9px 11px;
+    background: var(--bg);
+  }
+
+  .card-label {
+    font-size: 10px;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    margin-bottom: 4px;
+    font-weight: 600;
+  }
+
+  .phase-badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 9px;
+    border-radius: 20px;
+    margin-bottom: 6px;
+  }
+  .ph-setup  { background: var(--blue-lt);  color: var(--blue);  }
+  .ph-sample { background: var(--amber-lt); color: var(--amber); }
+  .ph-accept { background: var(--green-lt); color: var(--green); }
+  .ph-reject { background: var(--red-lt);   color: var(--red);   }
+  .ph-ready  { background: var(--bg3);      color: var(--text2); }
+
+  .step-desc {
+    font-size: 11px;
+    color: var(--text2);
+    line-height: 1.55;
+  }
+
+  .mathbox {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 5px 8px;
+    margin-top: 6px;
+    color: var(--text);
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .mathbox.ok  { border-color: var(--green); background: var(--green-lt); }
+  .mathbox.bad { border-color: var(--red);   background: var(--red-lt);   }
+
+  .stat-val {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.7;
+  }
+  .stat-val.ok  { color: var(--green); }
+  .stat-val.bad { color: var(--red);   }
+  .stat-val.info{ color: var(--blue);  }
+
+  .accepted-dots {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    min-height: 14px;
+    margin-top: 3px;
+  }
+  .adot {
+    width: 9px; height: 9px;
+    border-radius: 2px;
+    background: var(--green);
+    transform: rotate(45deg);
+    display: inline-block;
+  }
+
+  /* Controls */
+  #controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+
+  button {
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    padding: 5px 15px;
+    font-size: 12px;
+    font-family: var(--sans);
+    cursor: pointer;
+    color: var(--text);
+    transition: background .15s;
+  }
+  button:hover { background: var(--bg3); }
+  button.primary {
+    background: var(--blue-lt);
+    border-color: var(--blue);
+    color: var(--blue);
+    font-weight: 600;
+  }
+  button.primary:hover { filter: brightness(.95); }
+
+  .speed-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text2);
+    margin-left: auto;
+  }
+  input[type=range] {
+    width: 80px;
+    accent-color: var(--blue);
+  }
+
+  /* Controls row below canvas */
+  #ctrl-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+
+  /* Log */
+  #log-area {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg2);
+  }
+  #log-header {
+    font-size: 10px;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    font-weight: 600;
+    padding: 6px 10px 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  #log-body {
+    height: 70px;
+    overflow-y: auto;
+    padding: 4px 10px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    line-height: 1.65;
+  }
+  .li  { color: var(--blue);  }
+  .la  { color: var(--green); }
+  .lr  { color: var(--red);   }
+  .lg  { color: var(--text2); }
+
+  /* Config row */
+  #config-row {
+    display: flex;
+    gap: 16px;
+    margin-top: 14px;
+    font-size: 11.5px;
+    color: var(--text2);
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  #config-row label { display: flex; align-items: center; gap: 5px; }
+  #config-row input[type=range] { width: 90px; }
+  #config-row span.cv { font-family: var(--mono); font-weight: 600; color: var(--text); min-width: 24px; }
+
+  /* Identity legend below canvas */
+  #identity-legend {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 9px 12px;
+    background: var(--bg);
+    font-size: 10.5px;
+    line-height: 1.8;
+    color: var(--text2);
+    font-family: var(--mono);
+  }
+  #identity-legend strong {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text3);
+    font-family: var(--sans);
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  footer {
+    margin-top: 22px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    font-size: 10.5px;
+    color: var(--text3);
+    line-height: 1.7;
+  }
+
+  #identity-latex {
+    margin-top: 6px;
+    font-size: 13px;
+    overflow-x: auto;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>certified barycentric generation: algorithm 2 / lam 2025</h1>
+  <p>
+    <strong>Hy P. G. Lam</strong> &nbsp;·&nbsp;
+    Department of Mathematical Sciences, Worcester Polytechnic Institute &nbsp;·&nbsp;
+    <em><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="f0989c919db0878099de959485">[email&#160;protected]</a></em>
+  </p>
+  <p class="refs">
+    [Lam2026a] Close-to-Geometry-Preserving Sampleable Generation from Labeled Point Clouds &nbsp;|&nbsp;
+    [Lam2026b] Equiangular Tight Frames, Symmetry Classes, and Certified Barycentric Generation for Sampleable Point Clouds
+  </p>
+</header>
+
+<div id="layout">
+
+  <div id="canvas-col">
+    <canvas id="cv" width="540" height="400"></canvas>
+
+    <div id="ctrl-row">
+      <button class="primary" id="btn-step" onclick="step()">&#9654; Step</button>
+      <button id="btn-auto" onclick="toggleAuto()">Auto-run</button>
+      <button onclick="reset()">Reset</button>
+      <div class="speed-row">
+        Speed&nbsp;
+        <input type="range" id="speed" min="150" max="1800" value="800" step="50">
+      </div>
+    </div>
+
+    <div id="config-row">
+      <label style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">geometry
+        <select id="cfg-geo" onchange="rebuild()" style="font-size:11px;padding:2px 4px;">
+          <option value="two_gauss">two gaussians (IMS bias)</option>
+          <option value="tendrils">IMS tendrils (hub + 4 arms)</option>
+          <option value="chemical_8">8-chemical IMS mixture</option>
+          <option value="jp8_linear">JP8-style: near-linear</option>
+          <option value="sparse_dense">extreme sparse/dense</option>
+          <option value="annulus">biased annulus (H1=Z)</option>
+          <option value="figure8">figure-8 lemniscate (H1=Z+Z)</option>
+          <option value="horseshoe">horseshoe: dense ends + sparse bridge</option>
+          <option value="bridge">two blobs + thin bridge</option>
+          <option value="tree">branching tree / dendrogram</option>
+          <option value="spiral">archimedean spiral (dense center)</option>
+          <option value="concentric">3 concentric rings (H1=Z+Z+Z)</option>
+          <option value="two_moons">two moons (H0=2, curved)</option>
+          <option value="scattered_blobs">8 scattered blobs (variable density)</option>
+          <option value="blob_outliers">main blob + isolated outliers</option>
+          <option value="swiss_roll">swiss roll 2D cross-section</option>
+          <option value="pinwheel">pinwheel: 5 rotating arms</option>
+          <option value="crescent">crescent arc (asymmetric loop)</option>
+          <option value="nested_clusters">nested clusters (hierarchical density)</option>
+          <option value="diagonal_bands">diagonal density bands (H0=3)</option>
+          <option value="vortex">vortex: two spiraling arms</option>
+          <option value="star">star: 6 radial spikes (dense tips)</option>
+          <option value="grid_jitter">grid + jitter (near-uniform)</option>
+          <option value="chain_rings">chain of 4 linked rings (H1=Z^4)</option>
+        </select>
+      </label>
+      <label>k = <input type="range" id="cfg-k" min="2" max="100" value="5" step="1">
+        <span class="cv" id="disp-k">5</span></label>
+      <label>N = <input type="range" id="cfg-n" min="20" max="1500" value="60" step="10">
+        <span class="cv" id="disp-n">60</span></label>
+      <button onclick="rebuild()" style="padding:4px 10px;font-size:11px;">Rebuild cloud</button>
+    </div>
+
+    <div id="identity-legend">
+      <strong>core identities (proposition 4.3 of [lam2026a])</strong>
+      <div id="identity-latex">
+        $$\hat{y}(i^*) = c + \tfrac{k}{k+1}\,\bar{v}, \qquad \bar{v} = \tfrac{1}{k}\sum_{j \in \mathcal{N}_k(i^*;\,Y)}(y_j - y_{i^*})$$
+        $$\|\hat{y} - c\|^2 = \tfrac{k^2}{(k+1)^2}\,\|\bar{v}\|^2$$
+        $$\tfrac{1}{k}\sum_{j \in \mathcal{B}^*}\|\hat{y} - y_j\|^2 = \beta - \tfrac{k(k+2)}{(k+1)^2}\,\|\bar{v}\|^2, \qquad \beta = S_k(i^*;\,Y)$$
+        $$\text{bracket (corollary 4.7):} \quad \frac{\beta}{(k+1)^2} \;\le\; \tfrac{1}{k}\sum_{j \in \mathcal{B}^*}\|\hat{y}-y_j\|^2 \;\le\; \beta$$
+      </div>
+    </div>
+
+    <div id="log-area">
+      <div id="log-header">Event log</div>
+      <div id="log-body"></div>
+    </div>
+  </div>
+
+  <div id="side-col">
+    <div class="card">
+      <div class="card-label">Phase</div>
+      <span id="phase-badge" class="phase-badge ph-ready">Ready</span>
+      <div id="step-desc" class="step-desc">Press Step or Auto-run to begin.</div>
+      <div id="mathbox" class="mathbox"> </div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Bracket  [mₖ, Mₖ]</div>
+      <div class="stat-val info" id="val-mk">mₖ = —</div>
+      <div class="stat-val info" id="val-Mk">Mₖ = —</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Sₖ(ŷ ; Y)  — query result</div>
+      <div class="stat-val" id="val-sq">—</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Trials / Accepted</div>
+      <div class="stat-val" id="val-ta">0 / 0</div>
+      <div class="card-label" style="margin-top:8px">Accepted samples (◆)</div>
+      <div class="accepted-dots" id="dot-row"></div>
+    </div>
+
+    <div class="card" style="font-size:10.5px; color:var(--text2); line-height:1.65;">
+      <div class="card-label">Legend</div>
+      <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--text2);vertical-align:middle;margin-right:5px;"></span>Cloud Y<br>
+      <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--blue);vertical-align:middle;margin-right:5px;"></span>Anchor i*<br>
+      <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#378add;vertical-align:middle;margin-right:5px;"></span>k-NN neighborhood<br>
+      <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--amber);vertical-align:middle;margin-right:5px;"></span>Proposal ŷ<br>
+      <span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--green);transform:rotate(45deg);vertical-align:middle;margin-right:5px;"></span>Accepted x̂ = T⁻¹(ŷ)
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  Hy P. G. Lam &nbsp;·&nbsp; Worcester Polytechnic Institute &nbsp;·&nbsp; 2025 &nbsp;·&nbsp;
+  Self-contained HTML — no external dependencies — open locally in any modern browser. &nbsp;·&nbsp;
+  Cloud: 55% ~ N((0.28,0.52), 0.09²I) dense cluster + 45% ~ N((0.70,0.42), 0.16²I) sparse cluster.
+  The asymmetry makes the acceptance filter geometrically non-trivial.
+</footer>
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+// -------------------------------------------------------------------------
+// Certified Barycentric Generation  —  Algorithm animation
+// Hy P. G. Lam, Worcester Polytechnic Institute, 2025
+//
+// All variable names follow the notation of [Lam2026a] exactly.
+// -------------------------------------------------------------------------
+
+"use strict";
+
+const CV   = document.getElementById('cv');
+const ctx  = CV.getContext('2d');
+const CW   = 540, CH = 400;
+
+// Algorithm parameters
+let K = 5, N = 60;
+
+// State
+let pts = [];        // labeled cloud Y in [0,1]^2
+let accepted = [];   // accepted proposals (in canvas coords)
+let allSk = [];      // S_k(i;Y) for all i (precomputed in setup)
+let mk = 0, Mk = 0;
+let trials = 0, accs = 0;
+
+// Current step state
+let phase = 'init';     // 'init' | 'ready' | 'loop'
+let substep = 0;        // 0=draw, 1=nbrs, 2=proposal, 3=query, 4=decision
+let curI  = -1;
+let curNbrs = [];
+let curProp = null;
+let curSq   = -1;
+
+let autoTimer = null;
+
+// -------------------------------------------------------------------------
+// Math primitives — named as in the paper
+// -------------------------------------------------------------------------
+
+function sq_dist(a, b) {
+  return (a[0]-b[0])**2 + (a[1]-b[1])**2;
+}
+
+function knn(p, cloud, k, selfIdx) {
+  const dists = [];
+  for (let i = 0; i < cloud.length; i++) {
+    if (i === selfIdx) continue;
+    dists.push([i, sq_dist(p, cloud[i])]);
+  }
+  dists.sort((a, b) => a[1] - b[1]);
+  return dists.slice(0, k).map(d => d[0]);
+}
+
+// Grid-based kNN for large N
+const GRID = 30;
+let _grid = null;
+
+function buildGrid(cloud) {
+  const cells = new Array(GRID*GRID).fill(null).map(() => []);
+  for (let i = 0; i < cloud.length; i++) {
+    const gx = Math.min(GRID-1, Math.floor(cloud[i][0]*GRID));
+    const gy = Math.min(GRID-1, Math.floor(cloud[i][1]*GRID));
+    cells[gx*GRID+gy].push(i);
+  }
+  return cells;
+}
+
+function knnGrid(p, cloud, k, selfIdx, cells) {
+  const gx = Math.min(GRID-1, Math.floor(p[0]*GRID));
+  const gy = Math.min(GRID-1, Math.floor(p[1]*GRID));
+  const need = Math.max(k+4, 20);
+  let cands = [];
+  for (let r = 0; r <= GRID && cands.length < need; r++) {
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dy = -r; dy <= r; dy++) {
+        if (Math.abs(dx) < r && Math.abs(dy) < r) continue;
+        const nx = gx+dx, ny = gy+dy;
+        if (nx < 0 || nx >= GRID || ny < 0 || ny >= GRID) continue;
+        const cell = cells[nx*GRID+ny];
+        for (let j = 0; j < cell.length; j++) if (cell[j] !== selfIdx) cands.push(cell[j]);
+      }
+    }
+  }
+  cands.sort((a, b) => sq_dist(p, cloud[a]) - sq_dist(p, cloud[b]));
+  return cands.slice(0, k);
+}
+
+function knnFast(p, cloud, k, selfIdx) {
+  return (N > 200 && _grid) ? knnGrid(p, cloud, k, selfIdx, _grid) : knn(p, cloud, k, selfIdx);
+}
+
+function Sk(p, cloud, k, selfIdx) {
+  const nbrs = knnFast(p, cloud, k, selfIdx);
+  let s = 0;
+  for (const j of nbrs) s += sq_dist(p, cloud[j]);
+  return s / k;
+}
+
+function computeBracket() {
+  if (N > 200) _grid = buildGrid(pts);
+  allSk = pts.map((p, i) => Sk(p, pts, K, i));
+  mk = allSk.reduce((m, v) => Math.min(m, v), Infinity);
+  Mk = allSk.reduce((m, v) => Math.max(m, v), -Infinity);
+}
+
+// Barycentric proposal  y_hat = (y_{i*} + sum_{j in N_k(i*;Y)} y_j) / (k+1)
+function barycentricProposal(idx, nbrs) {
+  let sx = pts[idx][0], sy = pts[idx][1];
+  for (const j of nbrs) { sx += pts[j][0]; sy += pts[j][1]; }
+  return [sx / (K+1), sy / (K+1)];
+}
+
+// -------------------------------------------------------------------------
+// Cloud generation
+// -------------------------------------------------------------------------
+
+function gaussianSample(mx, my, sx, sy) {
+  // Box-Muller
+  let u, v;
+  do { u = Math.random(); } while (u === 0);
+  do { v = Math.random(); } while (v === 0);
+  const n1 = Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*v);
+  const n2 = Math.sqrt(-2*Math.log(u)) * Math.sin(2*Math.PI*v);
+  return [
+    Math.max(0.03, Math.min(0.97, mx + n1*sx)),
+    Math.max(0.03, Math.min(0.97, my + n2*sy))
+  ];
+}
+
+function clp(x) { return Math.max(0.03, Math.min(0.97, x)); }
+
+const GEO = {
+
+  two_gauss: n => {
+    const a = [], n1 = Math.round(n*0.55);
+    for (let i = 0; i < n1; i++) a.push(gaussianSample(0.28, 0.52, 0.09, 0.09));
+    for (let i = n1; i < n; i++) a.push(gaussianSample(0.70, 0.42, 0.16, 0.14));
+    return a;
+  },
+
+  tendrils: n => {
+    const a = [];
+    const nHub = Math.round(n*0.22);
+    for (let i = 0; i < nHub; i++) a.push(gaussianSample(0.45, 0.5, 0.04, 0.04));
+    const n1 = Math.round(n*0.28);
+    for (let i = 0; i < n1; i++) { const t = Math.random(); a.push([clp(0.45+t*0.42+(Math.random()-0.5)*0.018), clp(0.50-t*0.22+(Math.random()-0.5)*0.015)]); }
+    const n2 = Math.round(n*0.20);
+    for (let i = 0; i < n2; i++) { const t = Math.random(); a.push([clp(0.45+t*0.26+(Math.random()-0.5)*0.04), clp(0.50+t*0.28+(Math.random()-0.5)*0.04)]); }
+    const n3 = Math.round(n*0.18);
+    for (let i = 0; i < n3; i++) { const t = Math.pow(Math.random(), 0.5); a.push([clp(0.45-t*0.28+(Math.random()-0.5)*0.025), clp(0.50+t*0.08+(Math.random()-0.5)*0.025)]); }
+    const n4 = n - nHub - n1 - n2 - n3;
+    for (let i = 0; i < n4; i++) { const t = Math.random(), c = t*t*0.15; a.push([clp(0.45-t*0.22+c+(Math.random()-0.5)*0.022), clp(0.50-t*0.26+(Math.random()-0.5)*0.022)]); }
+    return a;
+  },
+
+  chemical_8: n => {
+    const a = [];
+    const chems = [
+      {cx:0.15,cy:0.20,sx:0.04,sy:0.04,f:0.10},{cx:0.45,cy:0.15,sx:0.06,sy:0.05,f:0.12},
+      {cx:0.75,cy:0.22,sx:0.12,sy:0.03,f:0.13},{cx:0.82,cy:0.55,sx:0.08,sy:0.10,f:0.13},
+      {cx:0.55,cy:0.78,sx:0.07,sy:0.04,f:0.12},{cx:0.25,cy:0.70,sx:0.18,sy:0.025,f:0.15},
+      {cx:0.20,cy:0.45,sx:0.04,sy:0.04,f:0.12},{cx:0.60,cy:0.42,sx:0.09,sy:0.09,f:0.13},
+    ];
+    chems.forEach(c => { const nc = Math.round(n*c.f); for (let i = 0; i < nc; i++) a.push(gaussianSample(c.cx,c.cy,c.sx,c.sy)); });
+    while (a.length < n) a.push(gaussianSample(0.5,0.5,0.1,0.1));
+    return a.slice(0, n);
+  },
+
+  jp8_linear: n => {
+    const a = [];
+    for (let i = 0; i < n; i++) { const t = Math.pow(Math.random(), 0.7); a.push([clp(0.10+t*0.80+(Math.random()-0.5)*0.02), clp(0.50+(Math.random()-0.5)*0.04+(t-0.5)*0.06)]); }
+    return a;
+  },
+
+  sparse_dense: n => {
+    const a = [];
+    const nD = Math.round(n*0.65);
+    for (let i = 0; i < nD; i++) a.push(gaussianSample(0.28, 0.38, 0.06, 0.06));
+    [[0.72,0.25],[0.80,0.65],[0.40,0.78],[0.65,0.82]].forEach(([cx,cy]) => {
+      const np = Math.floor((n-nD)/4);
+      for (let i = 0; i < np; i++) a.push(gaussianSample(cx, cy, 0.06, 0.06));
+    });
+    while (a.length < n) a.push([clp(0.1+Math.random()*0.8), clp(0.1+Math.random()*0.8)]);
+    return a.slice(0, n);
+  },
+
+  annulus: n => {
+    const a = [];
+    while (a.length < n) {
+      const r = 0.20+Math.random()*0.08, t = Math.random()*2*Math.PI;
+      if (Math.random() < (1+0.7*Math.abs(Math.cos(t)))/1.7) a.push([clp(0.5+r*Math.cos(t)), clp(0.5+r*Math.sin(t))]);
+    }
+    return a.slice(0, n);
+  },
+
+  figure8: n => {
+    const a = [];
+    for (let i = 0; i < n; i++) {
+      const t = Math.random()*2*Math.PI, sc = 0.22/(1+Math.sin(t)**2);
+      a.push([clp(0.5+sc*Math.cos(t)+(Math.random()-0.5)*0.018), clp(0.5+sc*Math.sin(t)*Math.cos(t)+(Math.random()-0.5)*0.018)]);
+    }
+    return a;
+  },
+
+  horseshoe: n => {
+    const a = [];
+    const nL = Math.round(n*0.35);
+    for (let i = 0; i < nL; i++) a.push(gaussianSample(0.22, 0.65, 0.04, 0.09));
+    for (let i = 0; i < nL; i++) a.push(gaussianSample(0.78, 0.65, 0.04, 0.09));
+    const nB = n - 2*nL;
+    for (let i = 0; i < nB; i++) { const t = Math.random(); a.push([clp(0.22+t*0.56+(Math.random()-0.5)*0.04), clp(0.28+(Math.random()-0.5)*0.06)]); }
+    return a;
+  },
+
+  bridge: n => {
+    const a = [];
+    const nB = Math.round(n*0.42);
+    for (let i = 0; i < nB; i++) a.push(gaussianSample(0.20, 0.50, 0.07, 0.07));
+    for (let i = 0; i < nB; i++) a.push(gaussianSample(0.80, 0.50, 0.07, 0.07));
+    const nBr = n - 2*nB;
+    for (let i = 0; i < nBr; i++) { const t = Math.random(); a.push([clp(0.20+t*0.60+(Math.random()-0.5)*0.025), clp(0.50+(Math.random()-0.5)*0.025)]); }
+    return a;
+  },
+
+  tree: n => {
+    const a = [];
+    const nR = Math.round(n*0.12);
+    for (let i = 0; i < nR; i++) a.push(gaussianSample(0.50, 0.88, 0.03, 0.03));
+    const branches = [{cx:0.25,cy:0.62,dx:-0.10,dy:-0.20},{cx:0.50,cy:0.55,dx:0.00,dy:-0.25},{cx:0.75,cy:0.62,dx:0.10,dy:-0.20}];
+    const nBr = Math.round(n*0.12);
+    branches.forEach(b => {
+      for (let i = 0; i < nBr; i++) a.push(gaussianSample(b.cx, b.cy, 0.025, 0.06));
+      [[b.cx+b.dx-0.07,b.cy+b.dy],[b.cx+b.dx+0.07,b.cy+b.dy]].forEach(([lx,ly]) => {
+        const nL = Math.round(n*0.09); for (let i = 0; i < nL; i++) a.push(gaussianSample(lx, ly, 0.04, 0.04));
+      });
+    });
+    while (a.length < n) a.push(gaussianSample(0.5, 0.5, 0.06, 0.06));
+    return a.slice(0, n);
+  },
+
+  spiral: n => {
+    const a = [];
+    for (let i = 0; i < n; i++) {
+      const t = Math.pow(Math.random(), 0.6), r = 0.06+t*0.40, th = t*3.5*2*Math.PI;
+      a.push([clp(0.5+r*Math.cos(th)+(Math.random()-0.5)*0.014), clp(0.5+r*Math.sin(th)+(Math.random()-0.5)*0.014)]);
+    }
+    return a;
+  },
+
+  concentric: n => {
+    const a = [];
+    [{r:0.08,w:0.018,f:0.30},{r:0.18,w:0.022,f:0.25},{r:0.34,w:0.030,f:0.45}].forEach(rg => {
+      const nr = Math.round(n*rg.f);
+      for (let i = 0; i < nr; i++) { const t = Math.random()*2*Math.PI, dr = (Math.random()-0.5)*rg.w; a.push([clp(0.5+(rg.r+dr)*Math.cos(t)), clp(0.5+(rg.r+dr)*Math.sin(t))]); }
+    });
+    while (a.length < n) a.push([clp(0.5+(Math.random()-0.5)*0.8), clp(0.5+(Math.random()-0.5)*0.8)]);
+    return a.slice(0, n);
+  },
+
+  two_moons: n => {
+    const a = [], h = Math.floor(n/2);
+    for (let i = 0; i < h; i++) { const t = Math.PI*i/(h-1); a.push([clp(0.25+0.36*Math.cos(t)+(Math.random()-0.5)*0.028), clp(0.38+0.30*Math.sin(t)+(Math.random()-0.5)*0.028)]); }
+    for (let i = h; i < n; i++) { const t = Math.PI+Math.PI*(i-h)/(n-h-1); a.push([clp(0.75+0.36*Math.cos(t)+(Math.random()-0.5)*0.028), clp(0.62+0.30*Math.sin(t)+(Math.random()-0.5)*0.028)]); }
+    return a;
+  },
+
+  scattered_blobs: n => {
+    const a = [];
+    const rng = () => 0.08+Math.random()*0.84;
+    const centers = Array.from({length:8}, () => ({cx:rng(),cy:rng(),sx:0.02+Math.random()*0.05,sy:0.02+Math.random()*0.05,w:Math.random()}));
+    const wSum = centers.reduce((s,c) => s+c.w, 0);
+    centers.forEach(c => { const nc = Math.max(2, Math.round(n*c.w/wSum)); for (let i = 0; i < nc; i++) a.push(gaussianSample(c.cx,c.cy,c.sx,c.sy)); });
+    while (a.length < n) a.push(gaussianSample(0.5, 0.5, 0.1, 0.1));
+    return a.slice(0, n);
+  },
+
+  blob_outliers: n => {
+    const a = [];
+    const nM = Math.round(n*0.82);
+    for (let i = 0; i < nM; i++) a.push(gaussianSample(0.45, 0.50, 0.09, 0.09));
+    for (let i = nM; i < n; i++) {
+      let x, y;
+      do { x = clp(Math.random()); y = clp(Math.random()); } while (Math.sqrt((x-0.45)**2+(y-0.50)**2) < 0.22);
+      a.push([x, y]);
+    }
+    return a;
+  },
+
+  swiss_roll: n => {
+    const a = [];
+    for (let i = 0; i < n; i++) {
+      const t = 1.5*Math.PI*(1+2*Math.random()), w = Math.random();
+      a.push([clp((t*Math.cos(t)/(9*Math.PI)+0.55)*0.88+0.06+(Math.random()-0.5)*0.02), clp(w*0.86+0.07+(Math.random()-0.5)*0.02)]);
+    }
+    return a;
+  },
+
+  pinwheel: n => {
+    const a = [];
+    const nHub = Math.round(n*0.10);
+    for (let i = 0; i < nHub; i++) a.push(gaussianSample(0.5, 0.5, 0.02, 0.02));
+    const nArm = Math.floor((n-nHub)/5);
+    for (let arm = 0; arm < 5; arm++) {
+      const base = (arm/5)*2*Math.PI;
+      for (let i = 0; i < nArm; i++) { const t = Math.pow(Math.random(),0.6), ang = base+t*1.4, r = 0.04+t*0.36; a.push([clp(0.5+r*Math.cos(ang)+(Math.random()-0.5)*0.015), clp(0.5+r*Math.sin(ang)+(Math.random()-0.5)*0.015)]); }
+    }
+    while (a.length < n) a.push(gaussianSample(0.5, 0.5, 0.03, 0.03));
+    return a.slice(0, n);
+  },
+
+  crescent: n => {
+    const a = [], r = 0.32, cxc = 0.48, cyc = 0.50;
+    let tries = 0;
+    while (a.length < n && tries < n*20) {
+      tries++;
+      const t = 0.4+2.3*Math.random();
+      if (Math.random() > Math.pow(Math.abs(Math.cos(t-1.55)), 0.4)) continue;
+      const dr = (Math.random()-0.5)*0.05;
+      a.push([clp(cxc+(r+dr)*Math.cos(t)+(Math.random()-0.5)*0.012), clp(cyc+(r+dr)*Math.sin(t)+(Math.random()-0.5)*0.012)]);
+    }
+    while (a.length < n) a.push(gaussianSample(cxc, cyc, 0.08, 0.08));
+    return a.slice(0, n);
+  },
+
+  nested_clusters: n => {
+    const a = [];
+    const macros = [{cx:0.25,cy:0.28},{cx:0.72,cy:0.30},{cx:0.50,cy:0.75}];
+    macros.forEach((mc, mi) => {
+      const nMacro = Math.round(n/3);
+      [[-1,-1],[0,1],[1,-1]].forEach((off, oi) => {
+        const nc = Math.round(nMacro/3), sc = 0.055+mi*0.012;
+        for (let i = 0; i < nc; i++) a.push(gaussianSample(mc.cx+off[0]*0.10, mc.cy+off[1]*0.10, sc*(0.7+oi*0.3), sc*(0.7+oi*0.3)));
+      });
+    });
+    while (a.length < n) a.push(gaussianSample(0.5, 0.5, 0.08, 0.08));
+    return a.slice(0, n);
+  },
+
+  diagonal_bands: n => {
+    const a = [];
+    const nPer = Math.floor(n/3);
+    [-0.22, 0, 0.22].forEach((off, bi) => {
+      const count = bi === 2 ? n-2*nPer : nPer;
+      for (let i = 0; i < count; i++) { const t = Math.random(); a.push([clp(0.08+t*0.84), clp(0.08+t*0.84+off+(Math.random()-0.5)*0.055)]); }
+    });
+    return a.slice(0, n);
+  },
+
+  vortex: n => {
+    const a = [];
+    for (let i = 0; i < n; i++) {
+      const arm = i%2, t = Math.pow(Math.random(), 0.55), r = 0.04+t*0.40, ang = t*4.2*Math.PI+arm*Math.PI;
+      a.push([clp(0.5+r*Math.cos(ang)+(Math.random()-0.5)*0.013), clp(0.5+r*Math.sin(ang)+(Math.random()-0.5)*0.013)]);
+    }
+    return a;
+  },
+
+  star: n => {
+    const a = [];
+    const nHub = Math.round(n*0.08);
+    for (let i = 0; i < nHub; i++) a.push(gaussianSample(0.5, 0.5, 0.018, 0.018));
+    const nSpike = Math.floor((n-nHub)/6);
+    for (let s = 0; s < 6; s++) {
+      const ang = (s/6)*2*Math.PI, count = s===5 ? n-nHub-5*nSpike : nSpike;
+      for (let i = 0; i < count; i++) { const t = Math.pow(Math.random(),0.4), r = 0.04+t*0.38; a.push([clp(0.5+r*Math.cos(ang)+(Math.random()-0.5)*0.018), clp(0.5+r*Math.sin(ang)+(Math.random()-0.5)*0.018)]); }
+    }
+    return a.slice(0, n);
+  },
+
+  grid_jitter: n => {
+    const a = [];
+    const side = Math.ceil(Math.sqrt(n));
+    for (let ix = 0; ix < side && a.length < n; ix++)
+      for (let iy = 0; iy < side && a.length < n; iy++)
+        a.push([clp((ix+0.5)/side+(Math.random()-0.5)*0.6/side), clp((iy+0.5)/side+(Math.random()-0.5)*0.6/side)]);
+    return a.slice(0, n);
+  },
+
+  chain_rings: n => {
+    const a = [];
+    const centers = [{cx:0.20,cy:0.50},{cx:0.40,cy:0.50},{cx:0.60,cy:0.50},{cx:0.80,cy:0.50}];
+    const nPer = Math.floor(n/4);
+    centers.forEach((c, ci) => {
+      const count = ci===3 ? n-3*nPer : nPer;
+      let added = 0, tries = 0;
+      while (added < count && tries < count*10) {
+        tries++;
+        const t = Math.random()*2*Math.PI;
+        if (Math.random() > (1+0.5*Math.abs(Math.cos(t)))/1.5) continue;
+        a.push([clp(c.cx+(0.11+(Math.random()-0.5)*0.028)*Math.cos(t)), clp(c.cy+(0.11+(Math.random()-0.5)*0.028)*Math.sin(t))]);
+        added++;
+      }
+      while (added < count) { a.push(gaussianSample(c.cx, c.cy, 0.04, 0.04)); added++; }
+    });
+    return a.slice(0, n);
+  },
+
+};
+
+function buildCloud() {
+  const geo = document.getElementById('cfg-geo');
+  const key = geo ? geo.value : 'two_gauss';
+  pts = GEO[key](N);
+}
+
+// -------------------------------------------------------------------------
+// Canvas rendering
+// -------------------------------------------------------------------------
+
+function cx(x) { return x * CW; }
+function cy(y) { return y * CH; }
+
+function isDark() {
+  return matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
+function getColors() {
+  const dark = isDark();
+  return {
+    bg:       dark ? '#1e1e1c' : '#f0eeea',
+    grid:     dark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)',
+    dot:      dark ? '#706f69' : '#9c9a93',
+    nbr:      '#378add',
+    anchor:   dark ? '#4a9cd6' : '#185fa5',
+    proposal: dark ? '#efab3a' : '#ba7517',
+    accept:   dark ? '#3ecfa0' : '#0f6e56',
+    reject:   dark ? '#e06060' : '#a32d2d',
+    text:     dark ? '#c8c6bc' : '#2c2c2a',
+    text2:    dark ? '#8d8c85' : '#5f5e5a',
+    heatBlue: dark ? '74,156,214' : '24,95,165',
+  };
+}
+
+function drawGrid(C) {
+  ctx.strokeStyle = C.grid;
+  ctx.lineWidth = 0.5;
+  for (let x = 0; x <= CW; x += CW/10) {
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,CH); ctx.stroke();
+  }
+  for (let y = 0; y <= CH; y += CH/10) {
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(CW,y); ctx.stroke();
+  }
+}
+
+function drawHeatmap(C) {
+  // Faint density halo per point, colored by local radius ratio
+  for (let i = 0; i < pts.length; i++) {
+    const ratio = Mk > mk ? (allSk[i] - mk) / (Mk - mk) : 0;
+    const alpha = 0.04 + ratio * 0.07;
+    const r = 26;
+    const gx = cx(pts[i][0]), gy = cy(pts[i][1]);
+    const g = ctx.createRadialGradient(gx, gy, 2, gx, gy, r);
+    g.addColorStop(0, `rgba(${C.heatBlue},${alpha.toFixed(3)})`);
+    g.addColorStop(1, `rgba(${C.heatBlue},0)`);
+    ctx.beginPath();
+    ctx.arc(gx, gy, r, 0, 2*Math.PI);
+    ctx.fillStyle = g;
+    ctx.fill();
+  }
+}
+
+function drawNeighborLines(C) {
+  if (curI < 0 || curNbrs.length === 0) return;
+  ctx.save();
+  ctx.setLineDash([4, 3]);
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = `rgba(${C.heatBlue}, 0.4)`;
+  for (const j of curNbrs) {
+    ctx.beginPath();
+    ctx.moveTo(cx(pts[curI][0]), cy(pts[curI][1]));
+    ctx.lineTo(cx(pts[j][0]),   cy(pts[j][1]));
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawProposalLine(C) {
+  if (!curProp || curI < 0) return;
+  ctx.save();
+  ctx.setLineDash([3, 3]);
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = C.proposal + '99';
+  ctx.beginPath();
+  ctx.moveTo(cx(pts[curI][0]), cy(pts[curI][1]));
+  ctx.lineTo(cx(curProp[0]),   cy(curProp[1]));
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawAccepted(C) {
+  for (const p of accepted) {
+    const x = cx(p[0]), y = cy(p[1]);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.PI / 4);
+    ctx.beginPath();
+    ctx.rect(-4.5, -4.5, 9, 9);
+    ctx.fillStyle = C.accept + 'cc';
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+function drawCloud(C) {
+  for (let i = 0; i < pts.length; i++) {
+    const x = cx(pts[i][0]), y = cy(pts[i][1]);
+    const rBase = N>800?1.5:N>400?2:N>150?2.5:N>80?3:4;
+    let fill = C.dot, r = rBase, strokeCol = null, strokeW = 0;
+    if (i === curI) {
+      fill = C.anchor; r = rBase+3;
+      strokeCol = isDark() ? '#fff' : '#fff'; strokeW = 1.8;
+    } else if (curNbrs.includes(i)) {
+      fill = C.nbr; r = rBase+1.5;
+    }
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, 2*Math.PI);
+    ctx.fillStyle = fill;
+    ctx.fill();
+    if (strokeCol) {
+      ctx.strokeStyle = strokeCol;
+      ctx.lineWidth = strokeW;
+      ctx.stroke();
+    }
+  }
+}
+
+function drawProposal(C) {
+  if (!curProp) return;
+  const x = cx(curProp[0]), y = cy(curProp[1]);
+  let col = C.proposal;
+  if (curSq >= 0) col = (curSq >= mk && curSq <= Mk) ? C.accept : C.reject;
+  ctx.beginPath();
+  ctx.arc(x, y, 9, 0, 2*Math.PI);
+  ctx.fillStyle = col + 'bb';
+  ctx.fill();
+  ctx.strokeStyle = col;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.font = 'bold 12px sans-serif';
+  ctx.fillStyle = col;
+  ctx.fillText('ŷ', x+11, y-8);
+}
+
+function drawAnchorLabel(C) {
+  if (curI < 0) return;
+  const x = cx(pts[curI][0]), y = cy(pts[curI][1]);
+  ctx.font = 'bold 12px sans-serif';
+  ctx.fillStyle = C.anchor;
+  ctx.fillText('i*', x+9, y-9);
+}
+
+function drawLegend(C) {
+  ctx.font = '10px sans-serif';
+  const items = [
+    [C.dot,      'Y cloud'],
+    [C.anchor,   'anchor i*'],
+    [C.nbr,      'k-NN'],
+    [C.proposal, 'proposal ŷ'],
+  ];
+  let lx = 10;
+  for (const [col, label] of items) {
+    ctx.beginPath();
+    ctx.arc(lx+4, 12, 4, 0, 2*Math.PI);
+    ctx.fillStyle = col;
+    ctx.fill();
+    ctx.fillStyle = C.text2;
+    ctx.fillText(label, lx+12, 16);
+    lx += ctx.measureText(label).width + 24;
+  }
+  // accepted diamond
+  ctx.save();
+  ctx.translate(lx+4, 12);
+  ctx.rotate(Math.PI/4);
+  ctx.beginPath();
+  ctx.rect(-3.5,-3.5,7,7);
+  ctx.fillStyle = C.accept + 'cc';
+  ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = C.text2;
+  ctx.fillText('accepted', lx+12, 16);
+}
+
+function render() {
+  const C = getColors();
+  ctx.clearRect(0, 0, CW, CH);
+  ctx.fillStyle = C.bg;
+  ctx.fillRect(0, 0, CW, CH);
+  drawGrid(C);
+  if (allSk.length === pts.length) drawHeatmap(C);
+  drawNeighborLines(C);
+  drawProposalLine(C);
+  drawAccepted(C);
+  drawCloud(C);
+  drawProposal(C);
+  drawAnchorLabel(C);
+  drawLegend(C);
+}
+
+// -------------------------------------------------------------------------
+// UI helpers
+// -------------------------------------------------------------------------
+
+function setPhaseBadge(cls, label) {
+  const el = document.getElementById('phase-badge');
+  el.className = 'phase-badge ' + cls;
+  el.textContent = label;
+}
+function setDesc(s) { document.getElementById('step-desc').textContent = s; }
+function setMath(s, cls) {
+  const m = document.getElementById('mathbox');
+  m.textContent = s;
+  m.className = 'mathbox' + (cls ? ' '+cls : '');
+}
+function setSq(v) {
+  const el = document.getElementById('val-sq');
+  if (v == null) { el.textContent = '—'; el.className = 'stat-val'; return; }
+  const ok = v >= mk && v <= Mk;
+  el.textContent = v.toFixed(5);
+  el.className = 'stat-val ' + (ok ? 'ok' : 'bad');
+}
+function updateBracket() {
+  document.getElementById('val-mk').textContent = 'mₖ = ' + mk.toFixed(5);
+  document.getElementById('val-Mk').textContent = 'Mₖ = ' + Mk.toFixed(5);
+}
+function updateTA() {
+  document.getElementById('val-ta').textContent = trials + ' / ' + accs;
+}
+function updateDots() {
+  const el = document.getElementById('dot-row');
+  el.innerHTML = '';
+  for (let i = 0; i < accepted.length; i++) {
+    const d = document.createElement('span');
+    d.className = 'adot';
+    el.appendChild(d);
+  }
+}
+function log(msg, cls) {
+  const lb = document.getElementById('log-body');
+  const d  = document.createElement('div');
+  d.className = cls || 'lg';
+  d.textContent = msg;
+  lb.appendChild(d);
+  lb.scrollTop = lb.scrollHeight;
+  while (lb.children.length > 120) lb.removeChild(lb.firstChild);
+}
+
+// -------------------------------------------------------------------------
+// Algorithm steps
+// -------------------------------------------------------------------------
+
+function doSetup() {
+  K = parseInt(document.getElementById('cfg-k').value);
+  N = parseInt(document.getElementById('cfg-n').value);
+  computeBracket();
+  updateBracket();
+  setPhaseBadge('ph-setup', 'Setup');
+  setDesc('Cloud Y built (N='+N+', k='+K+'). Local radii Sₖ(i;Y) computed for every i. Bracket [mₖ,Mₖ] stored.');
+  setMath('mₖ = '+mk.toFixed(5)+'\nMₖ = '+Mk.toFixed(5));
+  log('─── Setup: N='+N+', k='+K+' ───', 'li');
+  log('mₖ='+mk.toFixed(5)+'   Mₖ='+Mk.toFixed(5), 'lg');
+  phase = 'loop';
+  substep = 0;
+  render();
+}
+
+function doDraw() {
+  curI = Math.floor(Math.random() * N);
+  curNbrs = []; curProp = null; curSq = -1;
+  trials++;
+  updateTA();
+  setSq(null);
+  setPhaseBadge('ph-sample', 'Sample');
+  setDesc('Draw anchor index i* uniformly from {1,…,'+N+'}. Selected i*='+curI+'.');
+  setMath('i*  ~  Uniform{1, …, '+N+'}\ni* = '+curI);
+  log('Trial '+trials+':  i*='+curI, 'li');
+  substep = 1;
+  render();
+}
+
+function doNbrs() {
+  curNbrs = knnFast(pts[curI], pts, K, curI);
+  const beta = allSk[curI].toFixed(5);
+  setDesc('Retrieve k='+K+' nearest neighbors 𝒩ₖ(i*;Y) from the stored structure. β = Sₖ(i*;Y) = '+beta+'.');
+  setMath('𝒩ₖ(i*;Y) = {'+curNbrs.join(', ')+'}\nβ = Sₖ('+curI+';Y) = '+beta);
+  log('  𝒩ₖ = {'+curNbrs.join(',')+'},  β='+beta, 'lg');
+  substep = 2;
+  render();
+}
+
+function doProposal() {
+  curProp = barycentricProposal(curI, curNbrs);
+  // Compute exact identity quantities
+  const c  = pts[curI];
+  const vnx = curNbrs.reduce((s,j)=>s+pts[j][0],0)/K - c[0];
+  const vny = curNbrs.reduce((s,j)=>s+pts[j][1],0)/K - c[1];
+  const vbar2 = vnx*vnx + vny*vny;
+  const beta  = allSk[curI];
+  const dc2   = (K*K/((K+1)*(K+1))) * vbar2;
+  setPhaseBadge('ph-sample', 'Proposal');
+  setDesc('Form barycentric centroid ŷ = (y_{i*} + Σ yⱼ)/(k+1). Displacement identity: ŷ = c + k/(k+1)·v̄.');
+  setMath(
+    'ŷ = c + k/(k+1)·v̄\n' +
+    '‖ŷ−c‖² = k²/(k+1)² ‖v̄‖²\n' +
+    '       = '+dc2.toFixed(5)+'\n'+
+    'β = '+beta.toFixed(5)
+  );
+  log('  ŷ=('+curProp[0].toFixed(3)+','+curProp[1].toFixed(3)+')', 'lg');
+  substep = 3;
+  render();
+}
+
+function doQuery() {
+  curSq = Sk(curProp, pts, K, -1);
+  const ok = curSq >= mk && curSq <= Mk;
+  setSq(curSq);
+  setPhaseBadge('ph-sample', 'k-NN Query');
+  setDesc('Run fresh k-NN query of ŷ in Y to evaluate Sₖ(ŷ;Y). Cost: Q(N,d,k)+O(kd) per proposal.');
+  setMath(
+    'Sₖ(ŷ; Y) = '+curSq.toFixed(5)+'\n'+
+    'mₖ = '+mk.toFixed(5)+'\n'+
+    'Mₖ = '+Mk.toFixed(5)+'\n'+
+    (ok ? 'mₖ ≤ Sₖ(ŷ) ≤ Mₖ  →  ACCEPT' : 'Sₖ(ŷ) ∉ [mₖ,Mₖ]  →  REJECT')
+  );
+  log('  Sₖ(ŷ)='+curSq.toFixed(5)+'  '+(ok?'[ACCEPT]':'[REJECT]'), ok?'la':'lr');
+  substep = 4;
+  render();
+}
+
+function doDecision() {
+  const ok = curSq >= mk && curSq <= Mk;
+  if (ok) {
+    accs++;
+    accepted.push([...curProp]);
+    setPhaseBadge('ph-accept', '✓ Accepted');
+    setDesc('Sₖ(ŷ;Y) ∈ [mₖ,Mₖ].  ACCEPT.  Output x̂ = T_θ⁻¹(ŷ) and add to sample set.');
+    setMath('mₖ ≤ '+curSq.toFixed(5)+' ≤ Mₖ  ✓\nx̂ = T_θ⁻¹(ŷ)  [sample '+accs+']', 'ok');
+    updateDots();
+  } else {
+    const reason = curSq < mk
+      ? 'Sₖ(ŷ) < mₖ  (proposal too tight — bracket lower bound β/(k+1)² can be much less than mₖ when k is small)'
+      : 'Sₖ(ŷ) > Mₖ  (proposal too spread)';
+    setPhaseBadge('ph-reject', '✗ Rejected');
+    setDesc('Sₖ(ŷ;Y) ∉ [mₖ,Mₖ].  REJECT.  '+reason+'.  Draw new i*.');
+    setMath(curSq.toFixed(5)+' ∉ ['+mk.toFixed(5)+', '+Mk.toFixed(5)+']\n→ discard, resample', 'bad');
+  }
+  updateTA();
+  substep = 0;
+  render();
+}
+
+// -------------------------------------------------------------------------
+// Public controls
+// -------------------------------------------------------------------------
+
+function step() {
+  if (phase === 'init') { doSetup(); return; }
+  if (phase === 'ready') { doSetup(); return; }
+  if (phase === 'loop') {
+    if (substep === 0) doDraw();
+    else if (substep === 1) doNbrs();
+    else if (substep === 2) doProposal();
+    else if (substep === 3) doQuery();
+    else if (substep === 4) doDecision();
+  }
+}
+
+function toggleAuto() {
+  const btn = document.getElementById('btn-auto');
+  if (autoTimer) {
+    clearInterval(autoTimer);
+    autoTimer = null;
+    btn.textContent = 'Auto-run';
+    btn.classList.remove('primary');
+  } else {
+    btn.textContent = '⏸ Pause';
+    btn.classList.add('primary');
+    const delay = () => Math.max(100, 1950 - parseInt(document.getElementById('speed').value));
+    autoTimer = setInterval(() => step(), delay());
+    document.getElementById('speed').addEventListener('input', () => {
+      if (autoTimer) { clearInterval(autoTimer); autoTimer = setInterval(() => step(), delay()); }
+    });
+  }
+}
+
+function rebuild() {
+  K = parseInt(document.getElementById('cfg-k').value);
+  N = parseInt(document.getElementById('cfg-n').value);
+  document.getElementById('disp-k').textContent = K;
+  document.getElementById('disp-n').textContent = N;
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null;
+    document.getElementById('btn-auto').textContent = 'Auto-run';
+    document.getElementById('btn-auto').classList.remove('primary');
+  }
+  accepted = []; trials = 0; accs = 0;
+  curI = -1; curNbrs = []; curProp = null; curSq = -1; allSk = [];
+  mk = 0; Mk = 0;
+  phase = 'ready';
+  substep = 0;
+  document.getElementById('val-mk').textContent = 'mk = ?';
+  document.getElementById('val-Mk').textContent = 'Mk = ?';
+  document.getElementById('val-sq').textContent = '—';
+  document.getElementById('val-sq').className = 'stat-val';
+  document.getElementById('val-ta').textContent = '0 / 0';
+  document.getElementById('dot-row').innerHTML = '';
+  document.getElementById('log-body').innerHTML = '';
+  setMath(' ');
+  setPhaseBadge('ph-ready', 'Ready');
+  setDesc('Cloud rebuilt with N='+N+', k='+K+'. Press Step or Auto-run.');
+  buildCloud();
+  render();
+}
+
+function reset() {
+  rebuild();
+}
+
+// Config sliders live-update display
+document.getElementById('cfg-k').addEventListener('input', function() {
+  document.getElementById('disp-k').textContent = this.value;
+});
+document.getElementById('cfg-n').addEventListener('input', function() {
+  document.getElementById('disp-n').textContent = this.value;
+});
+
+// -------------------------------------------------------------------------
+// Init
+// -------------------------------------------------------------------------
+
+rebuild();
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+window.addEventListener('resize', render);
+</script>
+</body>
+</html>
